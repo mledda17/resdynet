@@ -225,7 +225,7 @@ def main() -> None:
         optimizer,
         mode="min",
         factor=0.5,
-        patience=50,
+        patience=200,
         min_lr=1e-8,
     )
 
