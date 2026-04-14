@@ -163,10 +163,10 @@ def main() -> None:
     num_epochs = 1500
     lr = 5e-5
     weight_decay = 0.0
-    val_fraction = 0.4
+    val_fraction = 0.2
     patience = 10000
     tail_start = 50
-    checkpoint_path = "checkpoints/best_resdynet_wh4.pth"
+    checkpoint_path = "checkpoints/best_resdynet_wh_first.pth"
     clip_grad_norm = 1.0
 
     gamma = torch.ones(cfg.horizon, dtype=torch.float32, device=device)
