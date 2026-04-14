@@ -290,7 +290,7 @@ def main() -> None:
     plot_chunked_test_prediction(
         y_true=test_eval_chunked["y_true"],
         y_pred=test_eval_chunked["y_pred"],
-        save_path="outputs/chunked_test_prediction.png",
+        save_path="outputs/chunked_test_prediction_f.png",
         title="ResDyNet - chunked test prediction",
     )
 
