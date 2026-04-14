@@ -1,0 +1,8 @@
+Duffing latent-dimension sensitivity study
+
+Dataset path: C:\Users\marco.ledda2\Desktop\ResDyNet\dataset\dataset_duffing.mat
+Raw shapes: {'u_train': (45000, 1), 'y_train': (45000, 1), 'u_val': (5000, 1), 'y_val': (5000, 1), 'u_test': (10000, 1), 'y_test': (10000, 1)}
+
+n_x=2: final test NRMSE mean=0.027463 std=0.007931
+n_x=8: final test NRMSE mean=0.029232 std=0.009761
+n_x=14: final test NRMSE mean=0.020290 std=0.004024
