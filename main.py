@@ -13,6 +13,7 @@ from src.config import ResDyNetConfig
 from src.dynamical_system_dataset import DynamicalSystemDataset, to_numpy_2d, to_torch_2d
 from src.train_utils import (
     evaluate_chunked_test_sequence,
+    load_checkpoint_state,
     plot_chunked_test_prediction,
     rollout_on_loader,
     train_model_multistep,
@@ -165,7 +166,7 @@ def main() -> None:
     val_fraction = 0.4
     patience = 10000
     tail_start = 50
-    checkpoint_path = "checkpoints/best_resdynet_wh5.pth"
+    checkpoint_path = "checkpoints/best_resdynet_wh4.pth"
     clip_grad_norm = 1.0
 
     gamma = torch.ones(cfg.horizon, dtype=torch.float32, device=device)
@@ -228,9 +229,15 @@ def main() -> None:
         min_lr=1e-8,
     )
 
-    log_stage("Starting training loop")
+    log_stage("Loading checkpoint")
+    checkpoint = load_checkpoint_state(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
 
-    # model.load_state_dict(torch.load("checkpoints/best_resdynet_wh.pth", map_location=device))
+    print("Loaded checkpoint:", checkpoint_path, flush=True)
+    print("Checkpoint epoch:", checkpoint["epoch"], flush=True)
+    print("Checkpoint best val loss:", checkpoint["best_val_loss"], flush=True)
+
+    log_stage("Starting training loop")
 
     history = train_model_multistep(
         model=model,
