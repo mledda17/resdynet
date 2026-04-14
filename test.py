@@ -13,6 +13,7 @@ from src.config import ResDyNetConfig
 from src.dynamical_system_dataset import DynamicalSystemDataset, to_numpy_2d, to_torch_2d
 from src.train_utils import (
     evaluate_chunked_test_sequence,
+    load_checkpoint_state,
     plot_chunked_test_prediction,
     rollout_on_loader,
     train_model_multistep,
@@ -159,13 +160,13 @@ def main() -> None:
     )
 
     batch_size = 256
-    num_epochs = 1500
-    lr = 5e-5
+    num_epochs = 5000
+    lr = 2e-4
     weight_decay = 0.0
-    val_fraction = 0.4
+    val_fraction = 0.2
     patience = 10000
     tail_start = 50
-    checkpoint_path = "checkpoints/best_resdynet_wh5.pth"
+    checkpoint_path = "checkpoints/best_resdynet_wh4.pth"
     clip_grad_norm = 1.0
 
     gamma = torch.ones(cfg.horizon, dtype=torch.float32, device=device)
@@ -225,33 +226,23 @@ def main() -> None:
         mode="min",
         factor=0.5,
         patience=50,
-        min_lr=1e-8,
+        min_lr=1e-6,
     )
 
-    log_stage("Starting training loop")
+    log_stage("Loading checkpoint")
+    checkpoint = load_checkpoint_state(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
 
-    # model.load_state_dict(torch.load("checkpoints/best_resdynet_wh.pth", map_location=device))
+    if checkpoint["optimizer_state_dict"] is not None:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
-    history = train_model_multistep(
-        model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        device=device,
-        gamma=gamma,
-        m=cfg.m,
-        num_epochs=num_epochs,
-        patience=patience,
-        checkpoint_path=checkpoint_path,
-        tail_start=tail_start,
-        clip_grad_norm=clip_grad_norm,
-    )
+    if checkpoint["scheduler_state_dict"] is not None:
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
 
-    print("\nTraining finished.", flush=True)
-    print("Stop epoch:", history["stop_epoch"], flush=True)
-    print("Best epoch:", history["best_epoch"], flush=True)
-    print("Best val loss:", history["best_val_loss"], flush=True)
+    print("Loaded checkpoint:", checkpoint_path, flush=True)
+    print("Checkpoint epoch:", checkpoint["epoch"], flush=True)
+    print("Checkpoint best val loss:", checkpoint["best_val_loss"], flush=True)
+
 
     log_stage("Running test rollout")
     test_rollout = rollout_on_loader(
