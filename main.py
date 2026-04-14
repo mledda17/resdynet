@@ -167,7 +167,7 @@ def main() -> None:
     patience = 10000
     tail_start = 50
     checkpoint_path = "checkpoints/best_resdynet_wh_first.pth"
-    clip_grad_norm = 1.0
+    clip_grad_norm = 5.0
 
     gamma = torch.ones(cfg.horizon, dtype=torch.float32, device=device)
 
