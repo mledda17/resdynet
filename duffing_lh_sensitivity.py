@@ -36,7 +36,10 @@ class StageMetric:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Sweep residual blocks L and horizon H on the Duffing benchmark with warm-start across horizons."
+        description=(
+            "Sweep residual blocks L and horizon H on the Duffing benchmark. "
+            "By default each (L, H) pair is trained independently to keep the grid comparison clean."
+        )
     )
     parser.add_argument("--dataset-path", default="dataset/dataset_duffing.mat")
     parser.add_argument("--output-dir", default="outputs/duffing_lh_sensitivity")
@@ -65,6 +68,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tail-start", type=int, default=20)
     parser.add_argument("--clip-grad-norm", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--warm-start-across-h",
+        action="store_true",
+        help=(
+            "Reuse the model trained at the previous horizon for the next horizon with the same L. "
+            "Disabled by default so each heatmap cell is an independent run."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -382,6 +393,7 @@ def save_stage_summary(path: Path, final_rows: list[StageMetric], args: argparse
         f"transition_hidden={args.transition_hidden}, activation={args.activation}",
         f"L values={args.l_values}",
         f"H values={args.h_values}",
+        f"warm_start_across_h={args.warm_start_across_h}",
         "",
         "Final stage results:",
     ]
@@ -390,6 +402,40 @@ def save_stage_summary(path: Path, final_rows: list[StageMetric], args: argparse
             f"L={row.residual_blocks}, H={row.horizon}: test NRMSE={row.test_nrmse_pct:.4f}% "
             f"(checkpoint={row.checkpoint_path})"
         )
+
+    lines.extend(
+        [
+            "",
+            "Per-horizon trend across L:",
+        ]
+    )
+    for horizon in args.h_values:
+        horizon_rows = sorted(
+            [row for row in final_rows if row.horizon == horizon],
+            key=lambda item: item.residual_blocks,
+        )
+        trend = ", ".join(
+            f"L={row.residual_blocks}: {row.test_nrmse_pct:.4f}%"
+            for row in horizon_rows
+        )
+        lines.append(f"H={horizon} -> {trend}")
+
+    lines.extend(
+        [
+            "",
+            "Per-block trend across H:",
+        ]
+    )
+    for residual_blocks in args.l_values:
+        block_rows = sorted(
+            [row for row in final_rows if row.residual_blocks == residual_blocks],
+            key=lambda item: item.horizon,
+        )
+        trend = ", ".join(
+            f"H={row.horizon}: {row.test_nrmse_pct:.4f}%"
+            for row in block_rows
+        )
+        lines.append(f"L={residual_blocks} -> {trend}")
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -453,6 +499,8 @@ def main() -> None:
 
         for horizon in args.h_values:
             print(f"  Training stage with L={residual_blocks}, H={horizon}", flush=True)
+            if not args.warm_start_across_h:
+                model = None
             stage_rows, model, checkpoint_path = train_stage(
                 args=args,
                 data=data,
