@@ -147,26 +147,26 @@ def main() -> None:
     cfg = ResDyNetConfig(
         n_u=1,
         n_y=1,
-        n_x=8,
+        n_x=16,
         n_a=20,
         n_b=20,
         m=0,                  # m=0 -> only current prediction
         horizon=20,
-        encoder_hidden=[256, 256],
-        transition_hidden=256,
+        encoder_hidden=[128, 128],
+        transition_hidden=128,
         transition_blocks=2,
-        decoder_hidden=[256, 256],
+        decoder_hidden=[128, 128],
         activation="tanh",
     )
 
-    batch_size = 10**10
+    batch_size = 256
     num_epochs = 1500
-    lr = 1e-5
+    lr = 1e-4
     weight_decay = 0.0
     val_fraction = 0.2
     patience = 10000
     tail_start = 50
-    checkpoint_path = "checkpoints/best_resdynet_wh_second.pth"
+    checkpoint_path = "checkpoints/best_resdynet_wh_try.pth"
     clip_grad_norm = 5.0
 
     gamma = torch.ones(cfg.horizon, dtype=torch.float32, device=device)
@@ -225,17 +225,9 @@ def main() -> None:
         optimizer,
         mode="min",
         factor=0.5,
-        patience=200,
-        min_lr=1e-8,
+        patience=60,
+        min_lr=1e-6,
     )
-
-    log_stage("Loading checkpoint")
-    checkpoint = load_checkpoint_state(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-
-    print("Loaded checkpoint:", checkpoint_path, flush=True)
-    print("Checkpoint epoch:", checkpoint["epoch"], flush=True)
-    print("Checkpoint best val loss:", checkpoint["best_val_loss"], flush=True)
 
     log_stage("Starting training loop")
 
