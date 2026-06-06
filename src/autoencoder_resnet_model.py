@@ -46,6 +46,7 @@ class AutoencoderResNetModel(nn.Module):
                 nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+        self.transition.reset_parameters_stable()
 
     def _parameter_device(self) -> torch.device:
         return next(self.parameters()).device

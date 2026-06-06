@@ -1,7 +1,7 @@
 # from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Callable
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -121,6 +121,8 @@ def train_model_multistep(
     checkpoint_path: str = "checkpoints/best_resdynet.pth",
     tail_start: int = 900,
     clip_grad_norm: float | None = 1.0,
+    metric_fn: Callable[[], Dict[str, float]] | None = None,
+    metric_every: int = 0,
 ):
     model = model.to(device)
     best_val = float("inf")
@@ -131,11 +133,12 @@ def train_model_multistep(
     gamma = torch.as_tensor(gamma, dtype=torch.float32, device=device)
     train_losses = []
     val_losses = []
+    metric_history: Dict[str, list[float | None]] = {}
 
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
-    
+
 
     for epoch in range(1, num_epochs + 1):
         model.train()
@@ -160,13 +163,13 @@ def train_model_multistep(
                 m=m,
             )
 
-            
+
             loss.backward()
 
             if clip_grad_norm is not None and clip_grad_norm > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
 
-            
+
             optimizer.step()
 
             train_loss_sum += loss.detach().item()
@@ -218,11 +221,30 @@ def train_model_multistep(
         else:
             no_improve += 1
 
+        metric_values: Dict[str, float] = {}
+        should_compute_metric = (
+            metric_fn is not None
+            and metric_every > 0
+            and (epoch == 1 or epoch % metric_every == 0 or epoch == num_epochs)
+        )
+        if should_compute_metric:
+            metric_values = metric_fn()
+
+        for metric_name in metric_values:
+            metric_history.setdefault(metric_name, [None] * (epoch - 1))
+        for metric_name, values in metric_history.items():
+            values.append(metric_values.get(metric_name))
+
+        metric_text = "".join(
+            f" | {metric_name} {metric_value:.4f}"
+            for metric_name, metric_value in metric_values.items()
+        )
         print(
             f"Epoch {epoch:04d} | "
             f"Train {avg_train_loss:.8f} | "
             f"Val {avg_val_loss:.8f} | "
             f"LR {current_lr:.3e}"
+            f"{metric_text}"
         )
 
         if no_improve >= patience:
@@ -244,6 +266,7 @@ def train_model_multistep(
     return {
         "train_loss": train_losses,
         "val_loss": val_losses,
+        "metrics": metric_history,
         "best_val_loss": best_val,
         "best_epoch": best_epoch,
         "stop_epoch": stop_epoch,

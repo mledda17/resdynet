@@ -3,7 +3,7 @@ import os
 
 # These must come before torch import
 import torch
-
+from dataclasses import replace
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
 import nonlinear_benchmarks
@@ -135,58 +135,23 @@ def select_device() -> torch.device:
             print("GPU:", torch.cuda.get_device_name(0), flush=True)
     return device
 
-def main() -> None:
-    log_stage("Entering main()")
-    torch.manual_seed(0)
 
-    log_stage("Selecting device")
-    device = select_device()
-    use_cuda = device.type == "cuda"
-
-    log_stage("Building configuration")
-    cfg = ResDyNetConfig(
-        n_u=1,
-        n_y=1,
-        n_x=16,
-        n_a=20,
-        n_b=20,
-        m=0,                  # m=0 -> only current prediction
-        horizon=20,
-        encoder_hidden=[128, 128],
-        transition_hidden=128,
-        transition_blocks=2,
-        decoder_hidden=[128, 128],
-        activation="tanh",
-    )
-
-    batch_size = 256
-    num_epochs = 1500
-    lr = 1e-4
-    weight_decay = 0.0
-    val_fraction = 0.2
-    patience = 10000
-    tail_start = 50
-    checkpoint_path = "checkpoints/best_resdynet_wh_try.pth"
-    clip_grad_norm = 5.0
-
-    gamma = torch.ones(cfg.horizon, dtype=torch.float32, device=device)
-
-    log_stage("Preparing dataset")
-    # data = prepare_cascaded_tanks_data(val_fraction=val_fraction, dtype=torch.float32)
-    data   = prepare_hammerstein_data(val_fraction=val_fraction, dtype=torch.float32)
-
-    log_stage("Creating torch datasets")
+def build_dataloaders(
+    data: dict,
+    cfg: ResDyNetConfig,
+    batch_size: int,
+    pin_memory: bool,
+) -> tuple[DataLoader, DataLoader, DataLoader]:
     train_ds = DynamicalSystemDataset(data["u_train"], data["y_train"], cfg)
     val_ds = DynamicalSystemDataset(data["u_val"], data["y_val"], cfg)
     test_ds = DynamicalSystemDataset(data["u_test"], data["y_test"], cfg)
 
-    log_stage("Creating data loaders")
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
         num_workers=0,
-        pin_memory=False,
+        pin_memory=pin_memory,
         persistent_workers=False,
     )
     val_loader = DataLoader(
@@ -194,7 +159,7 @@ def main() -> None:
         batch_size=batch_size,
         shuffle=False,
         num_workers=0,
-        pin_memory=False,
+        pin_memory=pin_memory,
         persistent_workers=False,
     )
     test_loader = DataLoader(
@@ -202,13 +167,76 @@ def main() -> None:
         batch_size=batch_size,
         shuffle=False,
         num_workers=0,
-        pin_memory=False,
+        pin_memory=pin_memory,
         persistent_workers=False,
     )
 
-    print(f"Train samples: {len(train_ds)}", flush=True)
-    print(f"Val samples:   {len(val_ds)}", flush=True)
-    print(f"Test samples:  {len(test_ds)}", flush=True)
+    return train_loader, val_loader, test_loader
+
+
+def stage_checkpoint_path(base_checkpoint_path: str, stage_horizon: int, final_horizon: int) -> str:
+    if stage_horizon == final_horizon:
+        return base_checkpoint_path
+    return base_checkpoint_path.replace(".pth", f"_H{stage_horizon}.pth")
+
+def main() -> None:
+    log_stage("Entering main()")
+    torch.manual_seed(42)
+
+    log_stage("Selecting device")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    use_cuda = device.type == "cuda"
+
+    log_stage("Building configuration")
+    cfg = ResDyNetConfig(
+        n_u=1,
+        n_y=1,
+        n_x=8,
+        n_a=50,
+        n_b=50,
+        m=0,                  # m=0 -> only current prediction
+        horizon=80,
+        encoder_hidden=[15],
+        transition_hidden=15,
+        transition_blocks=1,
+        decoder_hidden=[15],
+        activation="tanh",
+    )
+
+    batch_size = 256
+    base_lr = 1e-3
+    weight_decay = 0.0
+    val_fraction = 0.2
+    patience = 10000
+    tail_start = 50
+    checkpoint_path = "checkpoints/best_resdynet_WH_fresh.pth"
+    clip_grad_norm = 1.0
+    gamma_decay = 1.0
+    curriculum_horizons = [10, 20, 40, cfg.horizon]
+    curriculum_epochs = [300, 300, 500, 900]
+    curriculum_lrs = [1e-3, 5e-4, 2e-4, 3e-4]
+    test_metric_every = 25
+    resume_training = False
+    resume_from_horizon = curriculum_horizons[0]
+    resume_completed_epochs_before_checkpoint = 0
+    resume_lr_override = None
+    resume_remaining_epochs_override = None
+    resume_from_checkpoint = stage_checkpoint_path(
+        checkpoint_path,
+        resume_from_horizon,
+        cfg.horizon,
+    )
+    if not (len(curriculum_horizons) == len(curriculum_epochs) == len(curriculum_lrs)):
+        raise ValueError("curriculum_horizons, curriculum_epochs, and curriculum_lrs must align.")
+    if resume_from_horizon not in curriculum_horizons:
+        raise ValueError("resume_from_horizon must be one of curriculum_horizons.")
+
+    log_stage("Preparing dataset")
+    # data = prepare_cascaded_tanks_data(val_fraction=val_fraction, dtype=torch.float32)
+    data   = prepare_hammerstein_data(val_fraction=val_fraction, dtype=torch.float32)
 
     log_stage("Creating model")
     model = AutoencoderResNetModel(cfg).to(device)
@@ -217,34 +245,122 @@ def main() -> None:
     log_stage("Creating optimizer and scheduler")
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=lr,
+        lr=base_lr,
         weight_decay=weight_decay,
     )
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode="min",
-        factor=0.5,
-        patience=60,
-        min_lr=1e-6,
-    )
+    log_stage("Starting curriculum training loop")
 
-    log_stage("Starting training loop")
+    #checkpoint = load_checkpoint_state(checkpoint_path, map_location=device)
+    #model.load_state_dict(checkpoint["model_state_dict"])
 
-    history = train_model_multistep(
-        model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        device=device,
-        gamma=gamma,
-        m=cfg.m,
-        num_epochs=num_epochs,
-        patience=patience,
-        checkpoint_path=checkpoint_path,
-        tail_start=tail_start,
-        clip_grad_norm=clip_grad_norm,
+    history = None
+    resume_stage_idx = curriculum_horizons.index(resume_from_horizon) if resume_training else 0
+    for stage_idx, (stage_horizon, stage_epochs, stage_lr) in enumerate(
+        zip(curriculum_horizons, curriculum_epochs, curriculum_lrs),
+        start=1,
+    ):
+        if stage_idx - 1 < resume_stage_idx:
+            print(f"Skipping curriculum stage H={stage_horizon} because resume starts at H={resume_from_horizon}.", flush=True)
+            continue
+
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = stage_lr
+
+        stage_cfg = replace(cfg, horizon=stage_horizon)
+        train_loader, val_loader, test_loader = build_dataloaders(
+            data=data,
+            cfg=stage_cfg,
+            batch_size=batch_size,
+            pin_memory=use_cuda,
+        )
+        gamma = gamma_decay ** torch.arange(stage_horizon, dtype=torch.float32, device=device)
+
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.5,
+            patience=5,
+            min_lr=1e-6,
+        )
+
+        checkpoint_stage_path = stage_checkpoint_path(checkpoint_path, stage_horizon, cfg.horizon)
+
+        if resume_training and stage_horizon == resume_from_horizon:
+            checkpoint = load_checkpoint_state(resume_from_checkpoint, map_location=device)
+            model.load_state_dict(checkpoint["model_state_dict"])
+            if checkpoint["optimizer_state_dict"] is not None:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            if checkpoint["scheduler_state_dict"] is not None:
+                scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            if resume_lr_override is not None:
+                for param_group in optimizer.param_groups:
+                    param_group["lr"] = resume_lr_override
+
+            resumed_epoch = int(checkpoint["epoch"] or 0)
+            resumed_lr = optimizer.param_groups[0]["lr"]
+            if resume_remaining_epochs_override is not None:
+                stage_epochs = resume_remaining_epochs_override
+            else:
+                stage_epochs = max(
+                    1,
+                    stage_epochs - resume_completed_epochs_before_checkpoint - resumed_epoch,
+                )
+            print(
+                f"Resuming H={stage_horizon} from {resume_from_checkpoint} "
+                f"(completed before checkpoint={resume_completed_epochs_before_checkpoint}, "
+                f"checkpoint epoch={resumed_epoch}, remaining epochs={stage_epochs}, "
+                f"lr={resumed_lr:.3e}).",
+                flush=True,
+            )
+
+        current_stage_lr = optimizer.param_groups[0]["lr"]
+        print(
+            f"\nCurriculum stage {stage_idx}/{len(curriculum_horizons)} "
+            f"| H={stage_horizon} | epochs={stage_epochs} | lr={current_stage_lr:.1e}",
+            flush=True,
+        )
+        print(f"Train samples: {len(train_loader.dataset)}", flush=True)
+        print(f"Val samples:   {len(val_loader.dataset)}", flush=True)
+        print(f"Test samples:  {len(test_loader.dataset)}", flush=True)
+
+        def test_metric_fn(stage_cfg=stage_cfg) -> dict[str, float]:
+            test_eval = evaluate_chunked_test_sequence(
+                model=model,
+                u=data["u_test"],
+                y=data["y_test"],
+                cfg=stage_cfg,
+                device=device,
+                y_scaler=data["y_scaler"],
+            )
+            return {"Test NRMSE [%]": float(test_eval["nrmse_pct"].mean().item())}
+
+        history = train_model_multistep(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            device=device,
+            gamma=gamma,
+            m=cfg.m,
+            num_epochs=stage_epochs,
+            patience=patience,
+            checkpoint_path=checkpoint_stage_path,
+            tail_start=tail_start,
+            clip_grad_norm=clip_grad_norm,
+            metric_fn=test_metric_fn,
+            metric_every=test_metric_every,
+        )
+
+    if history is None:
+        raise RuntimeError("Curriculum training did not run any stage.")
+
+    _, _, test_loader = build_dataloaders(
+        data=data,
+        cfg=cfg,
+        batch_size=batch_size,
+        pin_memory=use_cuda,
     )
 
     print("\nTraining finished.", flush=True)
@@ -261,6 +377,7 @@ def main() -> None:
     test_rmse_norm = torch.sqrt(
         torch.mean((test_rollout["Y_hat_all"] - test_rollout["Y_true_all"]).pow(2))
     )
+
     print("\nTest rollout-window metric:", flush=True)
     print("Normalized RMSE on rollout windows:", float(test_rmse_norm), flush=True)
 
@@ -282,7 +399,7 @@ def main() -> None:
     plot_chunked_test_prediction(
         y_true=test_eval_chunked["y_true"],
         y_pred=test_eval_chunked["y_pred"],
-        save_path="outputs/chunked_test_prediction_f.png",
+        save_path="outputs/chunked_test_prediction.png",
         title="ResDyNet - chunked test prediction",
     )
 

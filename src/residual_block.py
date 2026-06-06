@@ -24,6 +24,11 @@ class ResidualBlock(nn.Module):
         self.fc1 = nn.Linear(n_x + n_u, hidden_size)
         self.fc2 = nn.Linear(hidden_size, n_x)
 
+    def reset_output_to_zero(self) -> None:
+        nn.init.zeros_(self.fc2.weight)
+        if self.fc2.bias is not None:
+            nn.init.zeros_(self.fc2.bias)
+
     def forward(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         module_device = self.fc1.weight.device
         if x.device != module_device:
@@ -33,3 +38,4 @@ class ResidualBlock(nn.Module):
 
         xu = torch.cat([x, u], dim=-1)
         return self.fc2(self.activation(self.fc1(xu)))
+

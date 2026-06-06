@@ -14,6 +14,7 @@ class TransitionResNet(nn.Module):
 
     def __init__(self, cfg: ResDyNetConfig) -> None:
         super().__init__()
+        self.cfg = cfg
         self.A_layer = nn.Linear(cfg.n_x, cfg.n_x, bias=cfg.use_bias_A)
         self.B_layer = nn.Linear(cfg.n_u, cfg.n_x, bias=cfg.use_bias_B)
 
@@ -28,6 +29,21 @@ class TransitionResNet(nn.Module):
                 for _ in range(cfg.transition_blocks)
             ]
         )
+
+    def reset_parameters_stable(self, state_decay: float = 0.95) -> None:
+        with torch.no_grad():
+            self.A_layer.weight.zero_()
+            diag_len = min(self.A_layer.weight.shape)
+            self.A_layer.weight[:diag_len, :diag_len].fill_diagonal_(state_decay)
+            if self.A_layer.bias is not None:
+                self.A_layer.bias.zero_()
+
+            nn.init.xavier_uniform_(self.B_layer.weight, gain=0.1)
+            if self.B_layer.bias is not None:
+                self.B_layer.bias.zero_()
+
+            for block in self.blocks:
+                block.reset_output_to_zero()
 
     def forward(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         module_device = self.A_layer.weight.device
