@@ -194,7 +194,7 @@ def main() -> None:
     cfg = ResDyNetConfig(
         n_u=1,
         n_y=1,
-        n_x=8,
+        n_x=14,
         n_a=50,
         n_b=50,
         m=0,                  # m=0 -> only current prediction
