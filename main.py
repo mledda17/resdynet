@@ -214,7 +214,7 @@ def main() -> None:
     tail_start = 50
     checkpoint_path = "checkpoints/best_resdynet_WH_fresh_dup.pth"
     clip_grad_norm = 0.25
-    gamma_decay = 0.98
+    gamma_decay = 1.0
     curriculum_horizons = [10, 20, 40, cfg.horizon]
     curriculum_epochs = [300, 300, 500, 900]
     curriculum_lrs = [1e-3, 5e-4, 2e-4, 3e-4]
@@ -222,8 +222,8 @@ def main() -> None:
     resume_training = True
     resume_from_horizon = cfg.horizon
     resume_completed_epochs_before_checkpoint = 0
-    resume_lr_override = 3e-5
-    resume_remaining_epochs_override = 200
+    resume_lr_override = 1e-5
+    resume_remaining_epochs_override = 300
     resume_optimizer_state = False
     resume_scheduler_state = False
     resume_from_checkpoint = stage_checkpoint_path(
