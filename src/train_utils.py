@@ -123,12 +123,21 @@ def train_model_multistep(
     clip_grad_norm: float | None = 1.0,
     metric_fn: Callable[[], Dict[str, float]] | None = None,
     metric_every: int = 0,
+    checkpoint_metric_name: str | None = None,
+    checkpoint_metric_mode: str = "min",
+    initialize_checkpoint_metric: bool = False,
 ):
     model = model.to(device)
     best_val = float("inf")
+    best_checkpoint_metric = float("inf") if checkpoint_metric_mode == "min" else -float("inf")
     best_epoch = 0
     no_improve = 0
     stop_epoch = None
+
+    if checkpoint_metric_mode not in {"min", "max"}:
+        raise ValueError("checkpoint_metric_mode must be 'min' or 'max'.")
+    if checkpoint_metric_name is not None and (metric_fn is None or metric_every <= 0):
+        raise ValueError("checkpoint_metric_name requires metric_fn and metric_every > 0.")
 
     gamma = torch.as_tensor(gamma, dtype=torch.float32, device=device)
     train_losses = []
@@ -137,6 +146,21 @@ def train_model_multistep(
 
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if initialize_checkpoint_metric:
+        if checkpoint_metric_name is None or metric_fn is None:
+            raise ValueError("initialize_checkpoint_metric requires checkpoint_metric_name and metric_fn.")
+        initial_metric_values = metric_fn()
+        if checkpoint_metric_name not in initial_metric_values:
+            raise KeyError(
+                f"checkpoint_metric_name={checkpoint_metric_name!r} was not returned "
+                f"by metric_fn. Available metrics: {sorted(initial_metric_values)}"
+            )
+        best_checkpoint_metric = initial_metric_values[checkpoint_metric_name]
+        print(
+            f"Initial checkpoint metric | {checkpoint_metric_name} {best_checkpoint_metric:.4f}",
+            flush=True,
+        )
 
 
 
@@ -208,18 +232,6 @@ def train_model_multistep(
 
         if avg_val_loss + 1e-12 < best_val:
             best_val = avg_val_loss
-            best_epoch = epoch
-            no_improve = 0
-            save_checkpoint_safe(
-                model,
-                checkpoint_path,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                epoch=epoch,
-                best_val_loss=best_val,
-            )
-        else:
-            no_improve += 1
 
         metric_values: Dict[str, float] = {}
         should_compute_metric = (
@@ -235,9 +247,52 @@ def train_model_multistep(
         for metric_name, values in metric_history.items():
             values.append(metric_values.get(metric_name))
 
+        if checkpoint_metric_name is None:
+            checkpoint_value = avg_val_loss
+            checkpoint_label = "Val loss"
+        elif should_compute_metric:
+            if checkpoint_metric_name not in metric_values:
+                raise KeyError(
+                    f"checkpoint_metric_name={checkpoint_metric_name!r} was not returned "
+                    f"by metric_fn. Available metrics: {sorted(metric_values)}"
+                )
+            checkpoint_value = metric_values[checkpoint_metric_name]
+            checkpoint_label = checkpoint_metric_name
+        else:
+            checkpoint_value = None
+            checkpoint_label = checkpoint_metric_name
+
+        saved_checkpoint = False
+        if checkpoint_value is not None:
+            if checkpoint_metric_mode == "min":
+                improved = checkpoint_value + 1e-12 < best_checkpoint_metric
+            else:
+                improved = checkpoint_value > best_checkpoint_metric + 1e-12
+
+            if improved:
+                best_checkpoint_metric = checkpoint_value
+                best_epoch = epoch
+                no_improve = 0
+                saved_checkpoint = True
+                save_checkpoint_safe(
+                    model,
+                    checkpoint_path,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    epoch=epoch,
+                    best_val_loss=best_val,
+                )
+            else:
+                no_improve += 1
+
         metric_text = "".join(
             f" | {metric_name} {metric_value:.4f}"
             for metric_name, metric_value in metric_values.items()
+        )
+        checkpoint_text = (
+            f" | Best checkpoint by {checkpoint_label}"
+            if saved_checkpoint and checkpoint_label is not None
+            else ""
         )
         print(
             f"Epoch {epoch:04d} | "
@@ -245,6 +300,7 @@ def train_model_multistep(
             f"Val {avg_val_loss:.8f} | "
             f"LR {current_lr:.3e}"
             f"{metric_text}"
+            f"{checkpoint_text}"
         )
 
         if no_improve >= patience:
@@ -268,6 +324,8 @@ def train_model_multistep(
         "val_loss": val_losses,
         "metrics": metric_history,
         "best_val_loss": best_val,
+        "best_checkpoint_metric": best_checkpoint_metric,
+        "checkpoint_metric_name": checkpoint_metric_name or "Val loss",
         "best_epoch": best_epoch,
         "stop_epoch": stop_epoch,
     }

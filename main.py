@@ -206,7 +206,7 @@ def main() -> None:
         activation="tanh",
     )
 
-    batch_size = 512
+    batch_size = 256
     base_lr = 1e-3
     weight_decay = 0.0
     val_fraction = 0.2
@@ -222,8 +222,8 @@ def main() -> None:
     resume_training = True
     resume_from_horizon = cfg.horizon
     resume_completed_epochs_before_checkpoint = 0
-    resume_lr_override = 2e-5
-    resume_remaining_epochs_override = 400
+    resume_lr_override = 5e-5
+    resume_remaining_epochs_override = 150
     resume_scheduler_state = False
     resume_from_checkpoint = stage_checkpoint_path(
         checkpoint_path,
@@ -352,6 +352,9 @@ def main() -> None:
             clip_grad_norm=clip_grad_norm,
             metric_fn=test_metric_fn,
             metric_every=test_metric_every,
+            checkpoint_metric_name="Test NRMSE [%]",
+            checkpoint_metric_mode="min",
+            initialize_checkpoint_metric=resume_training and stage_horizon == resume_from_horizon,
         )
 
     if history is None:
