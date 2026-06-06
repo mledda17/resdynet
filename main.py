@@ -259,11 +259,10 @@ def main() -> None:
         activation="tanh",
     )
 
-    batch_size = 10**10
+    batch_size = 8192
     base_lr = 1e-3
     weight_decay = 0.0
     val_fraction = 0.2
-    final_val_length = 40_000
     patience = 10000
     tail_start = 50
     checkpoint_path = "checkpoints/best_resdynet_WH_fresh_dup.pth"
@@ -276,7 +275,7 @@ def main() -> None:
     resume_training = True
     resume_from_horizon = cfg.horizon
     resume_completed_epochs_before_checkpoint = 0
-    resume_lr_override = 1e-5
+    resume_lr_override = 2e-6
     resume_remaining_epochs_override = 500
     resume_optimizer_state = False
     resume_scheduler_state = False
@@ -292,11 +291,7 @@ def main() -> None:
 
     log_stage("Preparing dataset")
     # data = prepare_cascaded_tanks_data(val_fraction=val_fraction, dtype=torch.float32)
-    data = prepare_hammerstein_final_search_data(
-        val_fraction=val_fraction,
-        final_val_length=final_val_length,
-        dtype=torch.float32,
-    )
+    data = prepare_hammerstein_data(val_fraction=val_fraction, dtype=torch.float32)
 
     log_stage("Creating model")
     model = AutoencoderResNetModel(cfg).to(device)
