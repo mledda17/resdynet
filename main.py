@@ -213,8 +213,8 @@ def main() -> None:
     patience = 10000
     tail_start = 50
     checkpoint_path = "checkpoints/best_resdynet_WH_fresh_dup.pth"
-    clip_grad_norm = 0.5
-    gamma_decay = 1.0
+    clip_grad_norm = 0.25
+    gamma_decay = 0.98
     curriculum_horizons = [10, 20, 40, cfg.horizon]
     curriculum_epochs = [300, 300, 500, 900]
     curriculum_lrs = [1e-3, 5e-4, 2e-4, 3e-4]
@@ -222,8 +222,9 @@ def main() -> None:
     resume_training = True
     resume_from_horizon = cfg.horizon
     resume_completed_epochs_before_checkpoint = 0
-    resume_lr_override = 5e-5
-    resume_remaining_epochs_override = 150
+    resume_lr_override = 3e-5
+    resume_remaining_epochs_override = 200
+    resume_optimizer_state = False
     resume_scheduler_state = False
     resume_from_checkpoint = stage_checkpoint_path(
         checkpoint_path,
@@ -290,7 +291,7 @@ def main() -> None:
         if resume_training and stage_horizon == resume_from_horizon:
             checkpoint = load_checkpoint_state(resume_from_checkpoint, map_location=device)
             model.load_state_dict(checkpoint["model_state_dict"])
-            if checkpoint["optimizer_state_dict"] is not None:
+            if resume_optimizer_state and checkpoint["optimizer_state_dict"] is not None:
                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             if resume_scheduler_state and checkpoint["scheduler_state_dict"] is not None:
                 scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
