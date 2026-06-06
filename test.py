@@ -4,6 +4,7 @@ import os
 # These must come before torch import
 import torch
 
+from dataclasses import replace
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
 import nonlinear_benchmarks
@@ -147,15 +148,15 @@ def main() -> None:
     cfg = ResDyNetConfig(
         n_u=1,
         n_y=1,
-        n_x=8,
-        n_a=20,
-        n_b=20,
+        n_x=14,
+        n_a=50,
+        n_b=50,
         m=0,                  # m=0 -> only current prediction
-        horizon=20,
-        encoder_hidden=[256, 256],
-        transition_hidden=256,
-        transition_blocks=2,
-        decoder_hidden=[256, 256],
+        horizon=80,
+        encoder_hidden=[15],
+        transition_hidden=15,
+        transition_blocks=1,
+        decoder_hidden=[15],
         activation="tanh",
     )
 
@@ -166,7 +167,7 @@ def main() -> None:
     val_fraction = 0.2
     patience = 10000
     tail_start = 50
-    checkpoint_path = "checkpoints/best_resdynet_wh4.pth"
+    checkpoint_path = "checkpoints/best_resdynet_WH_fresh.pth"
     clip_grad_norm = 1.0
 
     gamma = torch.ones(cfg.horizon, dtype=torch.float32, device=device)
@@ -257,18 +258,24 @@ def main() -> None:
     print("Normalized RMSE on rollout windows:", float(test_rmse_norm), flush=True)
 
     log_stage("Running chunked test evaluation")
-    test_eval_chunked = evaluate_chunked_test_sequence(
-        model=model,
-        u=data["u_test"],
-        y=data["y_test"],
-        cfg=cfg,
-        device=device,
-        y_scaler=data["y_scaler"],
-    )
+    chunked_evals = {}
+    for eval_horizon in (1, cfg.horizon):
+        eval_cfg = replace(cfg, horizon=eval_horizon)
+        test_eval_chunked = evaluate_chunked_test_sequence(
+            model=model,
+            u=data["u_test"],
+            y=data["y_test"],
+            cfg=eval_cfg,
+            device=device,
+            y_scaler=data["y_scaler"],
+        )
+        chunked_evals[eval_horizon] = test_eval_chunked
 
-    print("\nFinal chunked test metrics:", flush=True)
-    print("RMSE [volt]:", test_eval_chunked["rmse"].numpy(), flush=True)
-    print("NRMSE [%]:  ", test_eval_chunked["nrmse_pct"].numpy(), flush=True)
+        print(f"\nFinal chunked test metrics H={eval_horizon}:", flush=True)
+        print("RMSE [volt]:", test_eval_chunked["rmse"].numpy(), flush=True)
+        print("NRMSE [%]:  ", test_eval_chunked["nrmse_pct"].numpy(), flush=True)
+
+    test_eval_chunked = chunked_evals[cfg.horizon]
 
     log_stage("Plotting predictions")
     plot_chunked_test_prediction(

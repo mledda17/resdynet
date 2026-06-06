@@ -206,24 +206,25 @@ def main() -> None:
         activation="tanh",
     )
 
-    batch_size = 256
+    batch_size = 512
     base_lr = 1e-3
     weight_decay = 0.0
     val_fraction = 0.2
     patience = 10000
     tail_start = 50
-    checkpoint_path = "checkpoints/best_resdynet_WH_fresh.pth"
-    clip_grad_norm = 1.0
+    checkpoint_path = "checkpoints/best_resdynet_WH_fresh_dup.pth"
+    clip_grad_norm = 0.5
     gamma_decay = 1.0
     curriculum_horizons = [10, 20, 40, cfg.horizon]
     curriculum_epochs = [300, 300, 500, 900]
     curriculum_lrs = [1e-3, 5e-4, 2e-4, 3e-4]
     test_metric_every = 25
-    resume_training = False
-    resume_from_horizon = curriculum_horizons[0]
+    resume_training = True
+    resume_from_horizon = cfg.horizon
     resume_completed_epochs_before_checkpoint = 0
-    resume_lr_override = None
-    resume_remaining_epochs_override = None
+    resume_lr_override = 2e-5
+    resume_remaining_epochs_override = 400
+    resume_scheduler_state = False
     resume_from_checkpoint = stage_checkpoint_path(
         checkpoint_path,
         resume_from_horizon,
@@ -291,7 +292,7 @@ def main() -> None:
             model.load_state_dict(checkpoint["model_state_dict"])
             if checkpoint["optimizer_state_dict"] is not None:
                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            if checkpoint["scheduler_state_dict"] is not None:
+            if resume_scheduler_state and checkpoint["scheduler_state_dict"] is not None:
                 scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
             if resume_lr_override is not None:
                 for param_group in optimizer.param_groups:
