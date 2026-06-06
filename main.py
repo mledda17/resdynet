@@ -97,6 +97,58 @@ def prepare_hammerstein_data(val_fraction: float = 0.2, dtype: torch.dtype = tor
     }
 
 
+def prepare_hammerstein_final_search_data(
+    val_fraction: float = 0.2,
+    final_val_length: int = 40_000,
+    dtype: torch.dtype = torch.float32,
+):
+    train_val, test = nonlinear_benchmarks.WienerHammerBenchMark()
+    print("state_initialization_window_length:", test.state_initialization_window_length)
+
+    train_val_u, train_val_y = train_val
+    test_u, test_y = test
+
+    train_val_u = to_torch_2d(train_val_u, dtype=dtype)
+    train_val_y = to_torch_2d(train_val_y, dtype=dtype)
+    test_u = to_torch_2d(test_u, dtype=dtype)
+    test_y = to_torch_2d(test_y, dtype=dtype)
+
+    # Keep the scaler compatible with checkpoints trained using the original split,
+    # then use all train_val samples for the final local-minimum search.
+    u_scaler_train, y_scaler_train, _, _ = split_train_val(
+        train_val_u,
+        train_val_y,
+        val_fraction=val_fraction,
+    )
+    val_length = min(final_val_length, int(train_val_u.shape[0]))
+    u_val = train_val_u[-val_length:]
+    y_val = train_val_y[-val_length:]
+
+    u_scaler = StandardScaler()
+    y_scaler = StandardScaler()
+
+    u_scaler.fit(to_numpy_2d(u_scaler_train, "u_scaler_train"))
+    y_scaler.fit(to_numpy_2d(y_scaler_train, "y_scaler_train"))
+
+    u_train_scaled = u_scaler.transform(to_numpy_2d(train_val_u, "train_val_u"))
+    y_train_scaled = y_scaler.transform(to_numpy_2d(train_val_y, "train_val_y"))
+    u_val_scaled = u_scaler.transform(to_numpy_2d(u_val, "u_val"))
+    y_val_scaled = y_scaler.transform(to_numpy_2d(y_val, "y_val"))
+    u_test_scaled = u_scaler.transform(to_numpy_2d(test_u, "test_u"))
+    y_test_scaled = y_scaler.transform(to_numpy_2d(test_y, "test_y"))
+
+    return {
+        "u_train": to_torch_2d(u_train_scaled, dtype=dtype),
+        "y_train": to_torch_2d(y_train_scaled, dtype=dtype),
+        "u_val": to_torch_2d(u_val_scaled, dtype=dtype),
+        "y_val": to_torch_2d(y_val_scaled, dtype=dtype),
+        "u_test": to_torch_2d(u_test_scaled, dtype=dtype),
+        "y_test": to_torch_2d(y_test_scaled, dtype=dtype),
+        "u_scaler": u_scaler,
+        "y_scaler": y_scaler,
+    }
+
+
 def log_stage(message: str) -> None:
     print(f"[startup] {message}", flush=True)
 
@@ -141,6 +193,7 @@ def build_dataloaders(
     cfg: ResDyNetConfig,
     batch_size: int,
     pin_memory: bool,
+    train_shuffle: bool = True,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
     train_ds = DynamicalSystemDataset(data["u_train"], data["y_train"], cfg)
     val_ds = DynamicalSystemDataset(data["u_val"], data["y_val"], cfg)
@@ -149,7 +202,7 @@ def build_dataloaders(
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=train_shuffle,
         num_workers=0,
         pin_memory=pin_memory,
         persistent_workers=False,
@@ -206,10 +259,11 @@ def main() -> None:
         activation="tanh",
     )
 
-    batch_size = 256
+    batch_size = 10**10
     base_lr = 1e-3
     weight_decay = 0.0
     val_fraction = 0.2
+    final_val_length = 40_000
     patience = 10000
     tail_start = 50
     checkpoint_path = "checkpoints/best_resdynet_WH_fresh_dup.pth"
@@ -223,7 +277,7 @@ def main() -> None:
     resume_from_horizon = cfg.horizon
     resume_completed_epochs_before_checkpoint = 0
     resume_lr_override = 1e-5
-    resume_remaining_epochs_override = 300
+    resume_remaining_epochs_override = 500
     resume_optimizer_state = False
     resume_scheduler_state = False
     resume_from_checkpoint = stage_checkpoint_path(
@@ -238,7 +292,11 @@ def main() -> None:
 
     log_stage("Preparing dataset")
     # data = prepare_cascaded_tanks_data(val_fraction=val_fraction, dtype=torch.float32)
-    data   = prepare_hammerstein_data(val_fraction=val_fraction, dtype=torch.float32)
+    data = prepare_hammerstein_final_search_data(
+        val_fraction=val_fraction,
+        final_val_length=final_val_length,
+        dtype=torch.float32,
+    )
 
     log_stage("Creating model")
     model = AutoencoderResNetModel(cfg).to(device)
@@ -275,6 +333,7 @@ def main() -> None:
             cfg=stage_cfg,
             batch_size=batch_size,
             pin_memory=use_cuda,
+            train_shuffle=False,
         )
         gamma = gamma_decay ** torch.arange(stage_horizon, dtype=torch.float32, device=device)
 
@@ -366,6 +425,7 @@ def main() -> None:
         cfg=cfg,
         batch_size=batch_size,
         pin_memory=use_cuda,
+        train_shuffle=False,
     )
 
     print("\nTraining finished.", flush=True)
