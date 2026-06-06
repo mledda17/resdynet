@@ -247,7 +247,7 @@ def main() -> None:
     cfg = ResDyNetConfig(
         n_u=1,
         n_y=1,
-        n_x=14,
+        n_x=16,
         n_a=50,
         n_b=50,
         m=0,                  # m=0 -> only current prediction
@@ -259,24 +259,24 @@ def main() -> None:
         activation="tanh",
     )
 
-    batch_size = 8192
+    batch_size = 256
     base_lr = 1e-3
     weight_decay = 0.0
     val_fraction = 0.2
     patience = 10000
     tail_start = 50
-    checkpoint_path = "checkpoints/best_resdynet_WH_fresh_dup.pth"
-    clip_grad_norm = 0.25
+    checkpoint_path = "checkpoints/WH_curriculum_H1/best_resdynet_WH_curriculum_H1.pth"
+    clip_grad_norm = 0.5
     gamma_decay = 1.0
-    curriculum_horizons = [10, 20, 40, cfg.horizon]
-    curriculum_epochs = [300, 300, 500, 900]
-    curriculum_lrs = [1e-3, 5e-4, 2e-4, 3e-4]
+    curriculum_horizons = [1, 5, 10, 20, 40, cfg.horizon]
+    curriculum_epochs = [100, 150, 250, 300, 500, 1000]
+    curriculum_lrs = [1e-3, 8e-4, 5e-4, 3e-4, 2e-4, 1e-4]
     test_metric_every = 25
-    resume_training = True
+    resume_training = False
     resume_from_horizon = cfg.horizon
     resume_completed_epochs_before_checkpoint = 0
-    resume_lr_override = 2e-6
-    resume_remaining_epochs_override = 500
+    resume_lr_override = None
+    resume_remaining_epochs_override = None
     resume_optimizer_state = False
     resume_scheduler_state = False
     resume_from_checkpoint = stage_checkpoint_path(
@@ -328,7 +328,7 @@ def main() -> None:
             cfg=stage_cfg,
             batch_size=batch_size,
             pin_memory=use_cuda,
-            train_shuffle=False,
+            train_shuffle=True,
         )
         gamma = gamma_decay ** torch.arange(stage_horizon, dtype=torch.float32, device=device)
 
@@ -380,6 +380,8 @@ def main() -> None:
         print(f"Val samples:   {len(val_loader.dataset)}", flush=True)
         print(f"Test samples:  {len(test_loader.dataset)}", flush=True)
 
+        use_test_metric = stage_horizon == cfg.horizon
+
         def test_metric_fn(stage_cfg=stage_cfg) -> dict[str, float]:
             test_eval = evaluate_chunked_test_sequence(
                 model=model,
@@ -405,9 +407,9 @@ def main() -> None:
             checkpoint_path=checkpoint_stage_path,
             tail_start=tail_start,
             clip_grad_norm=clip_grad_norm,
-            metric_fn=test_metric_fn,
-            metric_every=test_metric_every,
-            checkpoint_metric_name="Test NRMSE [%]",
+            metric_fn=test_metric_fn if use_test_metric else None,
+            metric_every=test_metric_every if use_test_metric else 0,
+            checkpoint_metric_name="Test NRMSE [%]" if use_test_metric else None,
             checkpoint_metric_mode="min",
             initialize_checkpoint_metric=resume_training and stage_horizon == resume_from_horizon,
         )
