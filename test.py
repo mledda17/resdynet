@@ -148,7 +148,7 @@ def main() -> None:
     cfg = ResDyNetConfig(
         n_u=1,
         n_y=1,
-        n_x=14,
+        n_x=16,
         n_a=50,
         n_b=50,
         m=0,                  # m=0 -> only current prediction
@@ -167,7 +167,7 @@ def main() -> None:
     val_fraction = 0.2
     patience = 10000
     tail_start = 50
-    checkpoint_path = "checkpoints/best_resdynet_WH_fresh.pth"
+    checkpoint_path = "checkpoints/WH_curriculum_H1/best_resdynet_WH_curriculum_H1.pth"
     clip_grad_norm = 1.0
 
     gamma = torch.ones(cfg.horizon, dtype=torch.float32, device=device)

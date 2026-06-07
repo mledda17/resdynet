@@ -82,6 +82,7 @@ class DynamicalSystemDataset(Dataset):
         y: _torch.Tensor,
         cfg: ResDyNetConfig,
         dtype: _torch.dtype = _torch.float32,
+        stride: int = 1,
     ) -> None:
         super().__init__()
 
@@ -95,6 +96,9 @@ class DynamicalSystemDataset(Dataset):
         self.u = u.to(dtype)
         self.y = y.to(dtype)
         self.cfg = cfg
+        self.stride = int(stride)
+        if self.stride < 1:
+            raise ValueError(f"stride must be >= 1, got {self.stride}")
 
         self.T = int(u.shape[0])
         if not (0 <= cfg.m <= cfg.n_a):
@@ -108,7 +112,7 @@ class DynamicalSystemDataset(Dataset):
                 f"Sequence too short. T={self.T}, k_min={self.k_min}, k_max={self.k_max}"
             )
 
-        self.valid_indices = list(range(self.k_min, self.k_max + 1))
+        self.valid_indices = list(range(self.k_min, self.k_max + 1, self.stride))
 
     def __len__(self) -> int:
         return len(self.valid_indices)

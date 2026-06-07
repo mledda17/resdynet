@@ -149,6 +149,47 @@ def prepare_hammerstein_final_search_data(
     }
 
 
+def prepare_hammerstein_overlapping_val_data(
+    val_length: int = 20_000,
+    dtype: torch.dtype = torch.float32,
+):
+    train_val, test = nonlinear_benchmarks.WienerHammerBenchMark()
+    print("state_initialization_window_length:", test.state_initialization_window_length)
+
+    train_val_u, train_val_y = train_val
+    test_u, test_y = test
+
+    train_val_u = to_torch_2d(train_val_u, dtype=dtype)
+    train_val_y = to_torch_2d(train_val_y, dtype=dtype)
+    test_u = to_torch_2d(test_u, dtype=dtype)
+    test_y = to_torch_2d(test_y, dtype=dtype)
+
+    val_length = min(val_length, int(train_val_u.shape[0]))
+    u_val = train_val_u[-val_length:]
+    y_val = train_val_y[-val_length:]
+
+    u_scaler = StandardScaler()
+    y_scaler = StandardScaler()
+
+    u_train_scaled = u_scaler.fit_transform(to_numpy_2d(train_val_u, "train_val_u"))
+    y_train_scaled = y_scaler.fit_transform(to_numpy_2d(train_val_y, "train_val_y"))
+    u_val_scaled = u_scaler.transform(to_numpy_2d(u_val, "u_val"))
+    y_val_scaled = y_scaler.transform(to_numpy_2d(y_val, "y_val"))
+    u_test_scaled = u_scaler.transform(to_numpy_2d(test_u, "test_u"))
+    y_test_scaled = y_scaler.transform(to_numpy_2d(test_y, "test_y"))
+
+    return {
+        "u_train": to_torch_2d(u_train_scaled, dtype=dtype),
+        "y_train": to_torch_2d(y_train_scaled, dtype=dtype),
+        "u_val": to_torch_2d(u_val_scaled, dtype=dtype),
+        "y_val": to_torch_2d(y_val_scaled, dtype=dtype),
+        "u_test": to_torch_2d(u_test_scaled, dtype=dtype),
+        "y_test": to_torch_2d(y_test_scaled, dtype=dtype),
+        "u_scaler": u_scaler,
+        "y_scaler": y_scaler,
+    }
+
+
 def log_stage(message: str) -> None:
     print(f"[startup] {message}", flush=True)
 
@@ -194,10 +235,11 @@ def build_dataloaders(
     batch_size: int,
     pin_memory: bool,
     train_shuffle: bool = True,
+    dataset_stride: int = 1,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
-    train_ds = DynamicalSystemDataset(data["u_train"], data["y_train"], cfg)
-    val_ds = DynamicalSystemDataset(data["u_val"], data["y_val"], cfg)
-    test_ds = DynamicalSystemDataset(data["u_test"], data["y_test"], cfg)
+    train_ds = DynamicalSystemDataset(data["u_train"], data["y_train"], cfg, stride=dataset_stride)
+    val_ds = DynamicalSystemDataset(data["u_val"], data["y_val"], cfg, stride=dataset_stride)
+    test_ds = DynamicalSystemDataset(data["u_test"], data["y_test"], cfg, stride=dataset_stride)
 
     train_loader = DataLoader(
         train_ds,
@@ -234,7 +276,7 @@ def stage_checkpoint_path(base_checkpoint_path: str, stage_horizon: int, final_h
 
 def main() -> None:
     log_stage("Entering main()")
-    torch.manual_seed(42)
+    torch.manual_seed(123)
 
     log_stage("Selecting device")
     if torch.cuda.is_available():
@@ -247,7 +289,7 @@ def main() -> None:
     cfg = ResDyNetConfig(
         n_u=1,
         n_y=1,
-        n_x=16,
+        n_x=14,
         n_a=50,
         n_b=50,
         m=0,                  # m=0 -> only current prediction
@@ -262,15 +304,16 @@ def main() -> None:
     batch_size = 256
     base_lr = 1e-3
     weight_decay = 0.0
-    val_fraction = 0.2
+    val_fraction = 0.15
+    overlap_val_length = 20_000
     patience = 10000
     tail_start = 50
-    checkpoint_path = "checkpoints/WH_curriculum_H1/best_resdynet_WH_curriculum_H1.pth"
+    checkpoint_path = "checkpoints/WH_na50_nb50_gamma098/best_resdynet_WH_na50_nb50_gamma098.pth"
     clip_grad_norm = 0.5
-    gamma_decay = 1.0
-    curriculum_horizons = [1, 5, 10, 20, 40, cfg.horizon]
-    curriculum_epochs = [100, 150, 250, 300, 500, 1000]
-    curriculum_lrs = [1e-3, 8e-4, 5e-4, 3e-4, 2e-4, 1e-4]
+    gamma_decay = 0.98
+    curriculum_horizons = [10, 20, 40, cfg.horizon]
+    curriculum_epochs = [300, 300, 500, 1200]
+    curriculum_lrs = [1e-3, 5e-4, 2e-4, 1e-4]
     test_metric_every = 25
     resume_training = False
     resume_from_horizon = cfg.horizon
@@ -291,7 +334,10 @@ def main() -> None:
 
     log_stage("Preparing dataset")
     # data = prepare_cascaded_tanks_data(val_fraction=val_fraction, dtype=torch.float32)
-    data = prepare_hammerstein_data(val_fraction=val_fraction, dtype=torch.float32)
+    data = prepare_hammerstein_overlapping_val_data(
+        val_length=overlap_val_length,
+        dtype=torch.float32,
+    )
 
     log_stage("Creating model")
     model = AutoencoderResNetModel(cfg).to(device)
@@ -329,6 +375,7 @@ def main() -> None:
             batch_size=batch_size,
             pin_memory=use_cuda,
             train_shuffle=True,
+            dataset_stride=1,
         )
         gamma = gamma_decay ** torch.arange(stage_horizon, dtype=torch.float32, device=device)
 
@@ -380,7 +427,7 @@ def main() -> None:
         print(f"Val samples:   {len(val_loader.dataset)}", flush=True)
         print(f"Test samples:  {len(test_loader.dataset)}", flush=True)
 
-        use_test_metric = stage_horizon == cfg.horizon
+        use_test_metric = True
 
         def test_metric_fn(stage_cfg=stage_cfg) -> dict[str, float]:
             test_eval = evaluate_chunked_test_sequence(
@@ -423,6 +470,7 @@ def main() -> None:
         batch_size=batch_size,
         pin_memory=use_cuda,
         train_shuffle=False,
+        dataset_stride=1,
     )
 
     print("\nTraining finished.", flush=True)
